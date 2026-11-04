@@ -44,11 +44,15 @@ def get(url):
         return r.read().decode('utf-8', 'replace')
 
 
-def post_json(url, data, headers=None):
+def post_json(url, data, headers=None, method='POST'):
     body = json.dumps(data).encode()
-    req = urllib.request.Request(url, data=body, method='POST', headers={'Content-Type': 'application/json', 'User-Agent': UA, **(headers or {})})
+    req = urllib.request.Request(url, data=body, method=method, headers={'Content-Type': 'application/json', 'User-Agent': UA, **(headers or {})})
     with urllib.request.urlopen(req, timeout=30) as r:
-        return r.status
+        raw = r.read()
+    try:
+        return json.loads(raw) if raw else {}
+    except ValueError:
+        return {}
 
 
 class Meta(HTMLParser):
@@ -157,7 +161,8 @@ def announce_discord(it):
 
 
 def add_arena(it):
-    """Ajoute la fiche à la chaîne Are.na (API v3). ARENA_CHANNEL = nom court de la chaîne ou son numéro."""
+    """Ajoute l'IMAGE du projet à la chaîne Are.na (API v3), avec son nom et le lien vers la fiche.
+    ARENA_CHANNEL = nom court de la chaîne ou son numéro."""
     token, channel = os.environ.get('ARENA_TOKEN', '').strip(), os.environ.get('ARENA_CHANNEL', '').strip()
     if not (token and channel):
         return
@@ -166,7 +171,15 @@ def add_arena(it):
         req = urllib.request.Request(f'https://api.are.na/v3/channels/{urllib.parse.quote(channel)}', headers={'User-Agent': UA, **auth})
         with urllib.request.urlopen(req, timeout=30) as r:
             channel = str(json.load(r)['id'])
-    post_json('https://api.are.na/v3/blocks', {'value': it['url'], 'channel_ids': [int(channel)]}, auth)
+    value = it.get('image') or it['url']
+    block = post_json('https://api.are.na/v3/blocks', {'value': value, 'channel_ids': [int(channel)]}, auth)
+    # Titre et source : sans gravité si Are.na refuse, l'image est déjà dans la chaîne
+    bid = block.get('id') if isinstance(block, dict) else None
+    if bid:
+        try:
+            post_json(f'https://api.are.na/v3/blocks/{bid}', {'title': it['name'], 'description': it['url']}, auth, method='PUT')
+        except Exception as e:
+            print('Are.na : titre non ajouté :', e)
 
 
 def main():
