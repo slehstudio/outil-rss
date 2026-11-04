@@ -3,11 +3,14 @@
 
 Toutes les heures (GitHub Actions) :
   1. lit le plan du site (sitemap.xml) et repère les fiches /outil/… ;
+     le site mélange deux familles : les OUTILS (pour graphistes) et les projets GRAPHIQUES.
+     On ne partage que les projets graphiques. Une fiche est un outil si elle apparaît dans la
+     liste « Outil » de l'accueil (les nouveaux outils s'y affichent en premier) ; sinon c'est un graphique ;
   2. lit chaque nouvelle fiche (nom, description, image, date) ;
   3. réécrit feed.xml (flux RSS, lu par Pinterest et tout lecteur RSS) ;
-  4. annonce chaque NOUVEL outil sur Discord (webhook) et l'ajoute à une chaîne Are.na.
+  4. annonce chaque NOUVEAU projet graphique sur Discord (webhook) et l'ajoute à une chaîne Are.na.
 
-Au tout premier passage, il se contente de noter les outils existants :
+Au tout premier passage, il se contente de noter les fiches existantes :
 il n'inonde pas Discord ni Are.na avec tout le catalogue.
 Aucune dépendance : Python 3 seul.
 """
@@ -17,6 +20,7 @@ import os
 import re
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from email.utils import format_datetime
@@ -29,6 +33,9 @@ STATE = 'state.json'
 FEED = 'feed.xml'
 UA = 'OutilGraphique-RSS/1.0 (+https://github.com)'
 MAX_ITEMS = 100
+# Outils déjà présents le 4 novembre 2026 (la liste de l'accueil n'en montre que les premiers)
+OUTILS_CONNUS = {'stochaster', 'tooooools', 'glyphs', 'fontstruct', 'ui-colors', 'the-noun-project', 'lucide-animated',
+                 'react-bits', 'endless-tools', 'colorable', 'typescale', 'space-type-generator', 'poussetafonte'}
 
 
 def get(url):
@@ -96,6 +103,16 @@ def sitemap_urls():
     return sorted({u for u in urls if SECTION in u and u.rstrip('/').rsplit('/', 1)[-1] and not u.endswith(SECTION)})
 
 
+def slug(url):
+    return urllib.parse.unquote(url.rstrip('/').rsplit('/', 1)[-1])
+
+
+def outils_accueil():
+    """Fiches affichées dans la liste « Outil » de l'accueil (mode par défaut)."""
+    page = get(SITE + '/')
+    return {urllib.parse.unquote(m) for m in re.findall(r'href="\./outil/([^"?#]+)"', page)}
+
+
 def write_feed(items):
     now = format_datetime(datetime.now(timezone.utc))
     out = ['<?xml version="1.0" encoding="UTF-8"?>',
@@ -103,7 +120,7 @@ def write_feed(items):
            '<channel>',
            '<title>OutilGraphique</title>',
            f'<link>{escape(SITE)}</link>',
-           '<description>Les outils graphiques repérés par OutilGraphique.</description>',
+           '<description>Les projets graphiques repérés par OutilGraphique.</description>',
            '<language>fr</language>',
            f'<lastBuildDate>{now}</lastBuildDate>']
     for it in items[:MAX_ITEMS]:
@@ -131,7 +148,7 @@ def announce_discord(it):
     embed = {'title': it['name'], 'url': it['url'], 'description': it.get('desc') or '', 'color': 0x000000}
     if it.get('image'):
         embed['image'] = {'url': it['image']}
-    post_json(hook, {'username': 'OutilGraphique', 'content': 'Nouvel outil sur OutilGraphique', 'embeds': [embed]})
+    post_json(hook, {'username': 'OutilGraphique', 'content': 'Nouveau projet graphique sur OutilGraphique', 'embeds': [embed]})
 
 
 def add_arena(it):
@@ -146,7 +163,10 @@ def main():
     first_run = not state['items']
     known = {it['url'] for it in state['items']}
     new = [u for u in sitemap_urls() if u not in known]
-    print(f'{len(known)} outils connus, {len(new)} nouveau(x).')
+    outils = OUTILS_CONNUS | outils_accueil() | {slug(it['url']) for it in state['items'] if it.get('type') == 'outil'}
+    for it in state['items']:
+        it['type'] = 'outil' if slug(it['url']) in outils else 'graphique'
+    print(f'{len(known)} fiches connues, {len(new)} nouvelle(s).')
     errors = 0
     for u in new:
         try:
@@ -156,10 +176,14 @@ def main():
             errors += 1
             continue
         it['first_seen'] = datetime.now(timezone.utc).isoformat(timespec='seconds')
+        it['type'] = 'outil' if slug(u) in outils else 'graphique'
         state['items'].insert(0, it)
         if first_run:
             continue
-        print('Nouvel outil :', it['name'])
+        if it['type'] == 'outil':
+            print('Nouvel outil, pas partagé :', it['name'])
+            continue
+        print('Nouveau projet graphique :', it['name'])
         for f, label in ((announce_discord, 'Discord'), (add_arena, 'Are.na')):
             try:
                 f(it)
@@ -169,16 +193,18 @@ def main():
             except Exception as e:
                 print(f'{label} injoignable : {e}')
                 errors += 1
-    # Bouton « Run workflow » avec test coché : réannonce le dernier outil pour vérifier Discord et Are.na
-    if os.environ.get('TEST_ANNOUNCE') == 'true' and state['items']:
-        it = state['items'][0]
+    # Bouton « Run workflow » avec test coché : réannonce le dernier projet graphique pour vérifier Discord et Are.na
+    graphiques = [it for it in state['items'] if it.get('type') == 'graphique']
+    if os.environ.get('TEST_ANNOUNCE') == 'true' and graphiques:
+        it = graphiques[0]
         print('Test : annonce de', it['name'])
         announce_discord(it)
         add_arena(it)
     json.dump(state, open(STATE, 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
-    write_feed(state['items'])
+    write_feed(graphiques)
+    print(f'Flux : {len(graphiques)} projets graphiques ({len(state["items"]) - len(graphiques)} outils mis de côté).')
     if first_run:
-        print(f'Premier passage : {len(state["items"])} outils notés, rien annoncé.')
+        print(f'Premier passage : {len(state["items"])} fiches notées, rien annoncé.')
     return 1 if errors and not new else 0
 
 
