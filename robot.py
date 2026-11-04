@@ -80,12 +80,17 @@ class Meta(HTMLParser):
 MOIS = {'janv': 1, 'févr': 2, 'fevr': 2, 'mars': 3, 'avr': 4, 'mai': 5, 'juin': 6, 'juil': 7, 'août': 8, 'aout': 8, 'sept': 9, 'oct': 10, 'nov': 11, 'déc': 12, 'dec': 12}
 
 
+def clean(desc):
+    """Framer met « Made with Framer » quand une fiche n'a pas de description : on l'enlève."""
+    return '' if desc.strip().lower().startswith('made with framer') else desc.strip()
+
+
 def read_tool(url):
     p = Meta()
     p.feed(get(url))
     m = p.meta
     name = (m.get('og:title') or p.title or '').split(' - OutilGraphique')[0].strip()
-    desc = m.get('og:description') or m.get('description') or ''
+    desc = clean(m.get('og:description') or m.get('description') or '')
     img = m.get('og:image') or ''
     # date affichée sur la fiche, ex. « oct. 2026 » (indicative)
     shown = ''
@@ -166,6 +171,7 @@ def main():
     outils = OUTILS_CONNUS | outils_accueil() | {slug(it['url']) for it in state['items'] if it.get('type') == 'outil'}
     for it in state['items']:
         it['type'] = 'outil' if slug(it['url']) in outils else 'graphique'
+        it['desc'] = clean(it.get('desc') or '')
     print(f'{len(known)} fiches connues, {len(new)} nouvelle(s).')
     errors = 0
     for u in new:
