@@ -153,14 +153,20 @@ def announce_discord(it):
     embed = {'title': it['name'], 'url': it['url'], 'description': it.get('desc') or '', 'color': 0x000000}
     if it.get('image'):
         embed['image'] = {'url': it['image']}
-    post_json(hook, {'username': 'OutilGraphique', 'content': 'Nouveau projet graphique sur OutilGraphique', 'embeds': [embed]})
+    post_json(hook, {'username': 'OutilGraphique', 'embeds': [embed]})
 
 
 def add_arena(it):
+    """Ajoute la fiche à la chaîne Are.na (API v3). ARENA_CHANNEL = nom court de la chaîne ou son numéro."""
     token, channel = os.environ.get('ARENA_TOKEN', '').strip(), os.environ.get('ARENA_CHANNEL', '').strip()
     if not (token and channel):
         return
-    post_json(f'https://api.are.na/v2/channels/{channel}/blocks', {'source': it['url']}, {'Authorization': 'Bearer ' + token})
+    auth = {'Authorization': 'Bearer ' + token}
+    if not channel.isdigit():
+        req = urllib.request.Request(f'https://api.are.na/v3/channels/{urllib.parse.quote(channel)}', headers={'User-Agent': UA, **auth})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            channel = str(json.load(r)['id'])
+    post_json('https://api.are.na/v3/blocks', {'value': it['url'], 'channel_ids': [int(channel)]}, auth)
 
 
 def main():
